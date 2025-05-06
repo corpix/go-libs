@@ -34,6 +34,12 @@ func (mp MultiPromise[T]) AsPromiseWithKeys() []PromiseWithKey[T, int] {
 	return result
 }
 
+var _ Awaitable = MultiPromise[int]{}
+
+func (mp MultiPromise[T]) Await(ctx context.Context) error {
+	return AwaitAll(ctx, mp.AsWaitables()...)
+}
+
 func (mp MultiPromise[T]) iterAllResults(ctx context.Context) Iterator[T, int] {
 	return IterAllResults(ctx, mp.AsPromiseWithKeys()...)
 }

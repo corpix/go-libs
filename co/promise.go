@@ -50,18 +50,22 @@ func (p *promise[T]) onComplete(result T, err error) {
 	close(p.done)
 }
 
+func (p *promise[T]) launch() {
+	p.launched.Store(true)
+	p.result, p.err = p.f()
+	p.comleted.Store(true)
+	close(p.done)
+}
+
 func (p *promise[T]) ensureLaunched() (result bool) {
 	if p.launched.Load() {
 		return
 	}
 
 	p.onceLaunch.Do(func() {
-		p.launched.Store(true)
 		result = true
-
-		go func() {
-			p.onComplete(p.f())
-		}()
+		p.launched.Store(true)
+		go p.launch()
 	})
 
 	return
@@ -126,9 +130,7 @@ func NewResolved[T any](result T) Promise[T] {
 	p := NewLazyPromise(func() (T, error) {
 		return result, nil
 	})
-
-	p.launched.Store(true)
-	p.onComplete(result, nil)
+	p.launch()
 
 	return p
 }
@@ -137,9 +139,7 @@ func NewRejected[T any](err error) Promise[T] {
 	p := NewLazyPromise(func() (T, error) {
 		return std.Zero[T](), err
 	})
-
-	p.launched.Store(true)
-	p.onComplete(std.Zero[T](), err)
+	p.launch()
 
 	return p
 }
@@ -149,6 +149,13 @@ var Resolved = NewResolved(std.Void{})
 var ErrRejected = errors.New("rejected")
 
 var Rejected = NewRejected[std.Void](ErrRejected)
+
+func NewNeverResolved[T any]() Promise[T] {
+	return NewPromise(func() (T, error) {
+		<-context.Background().Done()
+		return std.Zero[T](), nil
+	})
+}
 
 // var Never = NewPromise(func() (struct{}, error) {
 // 	<-context.Background().Done()

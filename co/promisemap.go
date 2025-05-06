@@ -38,6 +38,12 @@ func (pm PromiseMap[K, T]) AsPromiseWithKeys() []PromiseWithKey[T, K] {
 	return result
 }
 
+var _ Awaitable = PromiseMap[int, string]{}
+
+func (pm PromiseMap[K, T]) Await(ctx context.Context) error {
+	return AwaitAll(ctx, pm.AsWaitables()...)
+}
+
 func (pm PromiseMap[K, T]) iterAllResults(ctx context.Context) Iterator[T, K] {
 	return IterAllResults(ctx, pm.AsPromiseWithKeys()...)
 }
