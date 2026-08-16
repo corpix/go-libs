@@ -4,7 +4,7 @@ import (
 	"context"
 
 	"github.com/SlamJam/go-libs/actors"
-	"github.com/SlamJam/go-libs/xgo"
+	"github.com/SlamJam/go-libs/xerrors"
 	"github.com/SlamJam/go-libs/xsync"
 )
 
@@ -104,9 +104,7 @@ func (w *workerpool[T]) tryStartWorker() bool {
 			// Если мы тут, но не по своей воли, вероятно идёт паника.
 			// Тогда нужно сделать w.workersCount--
 			if !needEvict {
-				w.condr.DoAndNotifyAll(func() {
-					w.workersCount--
-				})
+				w.condr.DoAndNotifyAll(func() { w.workersCount-- })
 			}
 		}()
 
@@ -137,9 +135,9 @@ func (w *workerpool[T]) tryStartWorker() bool {
 					return
 				}
 
-				// var err error
-				if panicObj := xgo.CatchPanic(func() { w.f(w.ctx, item) }); panicObj != nil {
-					w.Panics <- Panic[T]{Item: item, Panic: panicObj}
+				err := xerrors.RecoverVoid(func() error { w.f(w.ctx, item); return nil })
+				if err != nil {
+					w.Panics <- Panic[T]{Item: item, Panic: err}
 				}
 
 				// if err != nil {

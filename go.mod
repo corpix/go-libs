@@ -1,13 +1,14 @@
 module github.com/SlamJam/go-libs
 
-go 1.23.0
+go 1.27
 
-toolchain go1.24.2
+toolchain go1.27rc3
 
 require (
 	github.com/pkg/errors v0.9.1
-	github.com/stretchr/testify v1.8.2
+	github.com/stretchr/testify v1.11.1
 	go.uber.org/multierr v1.11.0
+	golang.org/x/sync v0.22.0
 )
 
 require (

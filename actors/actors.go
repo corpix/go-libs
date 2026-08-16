@@ -6,7 +6,7 @@ import (
 	"sync/atomic"
 
 	"github.com/SlamJam/go-libs/options"
-	"github.com/SlamJam/go-libs/xgo"
+	"github.com/SlamJam/go-libs/xerrors"
 	"github.com/SlamJam/go-libs/xsync"
 	"github.com/pkg/errors"
 )
@@ -36,7 +36,13 @@ func callGlobalPanicHandler(p any) {
 }
 
 // Жизненный цикл:
-// Создан -> Запущен -> [Прерван] -> Остановлен/Завершён
+// Создан -> Запущен -> [Прерван] -> Завершён[+Остановлен]
+
+/*
+// Создан -> Запущен -------------> Завершён
+//                   \
+//                    -> Прерван -> Завершён+Остановлен
+*/
 type Actor interface {
 	Start(ctx context.Context) (result bool)
 	Interrupt(ctx context.Context) (err error)
@@ -127,7 +133,7 @@ func (c *actor) Start(ctx context.Context) (result bool) {
 
 			close(c.started)
 
-			c.haltError = xgo.CatchPanicInErr(func() error {
+			c.haltError = xerrors.RecoverVoid(func() error {
 				return errors.WithStack(c.main(lctx))
 			})
 
@@ -204,7 +210,7 @@ func (c *actor) WaitUntilStarted(ctx context.Context) error {
 	case <-c.started:
 		return nil
 	case <-ctx.Done():
-		return ctx.Err()
+		return context.Cause(ctx)
 	}
 }
 
@@ -215,7 +221,7 @@ func (c *actor) WaitUntilHalted(ctx context.Context) error {
 	case <-c.done:
 		return nil
 	case <-ctx.Done():
-		return ctx.Err()
+		return context.Cause(ctx)
 	}
 }
 

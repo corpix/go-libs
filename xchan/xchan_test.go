@@ -1,19 +1,13 @@
 package xchan_test
 
-import (
-	"testing"
+// func TestExample(t *testing.T) {
+// 	var stream <-chan string
 
-	"github.com/SlamJam/go-libs/xchan"
-)
-
-func TestExample(t *testing.T) {
-	var stream <-chan string
-
-	xchan.Parallel(
-		xchan.Batch[string](500)(stream),
-		func(batch []string) error {
-			return nil
-		},
-		8,
-	)
-}
+// 	xchan.Parallel(
+// 		xchan.Batch[string](500)(stream),
+// 		func(batch []string) error {
+// 			return nil
+// 		},
+// 		8,
+// 	)
+// }

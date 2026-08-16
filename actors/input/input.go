@@ -62,7 +62,7 @@ func (in input[T]) AddWithContext(ctx context.Context, item T) error {
 	case <-in.done:
 		return ErrClosed
 	case <-ctx.Done():
-		return ctx.Err()
+		return context.Cause(ctx)
 	}
 
 	return nil

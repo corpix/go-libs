@@ -3,54 +3,34 @@ package xchan
 import (
 	"context"
 	"sync"
-	"time"
 
-	std "github.com/SlamJam/go-libs"
+	"github.com/SlamJam/go-libs/xerrors"
 )
 
-func PutContext[T any](ctx context.Context, ch chan<- T, item T) error {
-	select {
-	case ch <- item:
-	case <-ctx.Done():
-		return ctx.Err()
-	}
-
-	return nil
-}
-
-func Put[T any](ch chan<- T, item T, d time.Duration) error {
-	select {
-	case ch <- item:
-	case <-time.After(d):
-		return std.ErrTimeout
-	}
-
-	return nil
-}
-
-func IsClosed[T any](ch <-chan T) bool {
-	select {
-	case _, ok := <-ch:
-		return !ok
-	default:
-		return false
-	}
-}
-
-func FanIn[T any](chans ...<-chan T) <-chan T {
+func FanIn[T, V any](fn func(merged <-chan T, cancel func()) (V, error), chans ...<-chan T) (V, error) {
 	result := make(chan T)
+
+	readCtx, readCancel := context.WithCancel(context.Background())
+	defer readCancel()
+
+	writeCtx, writeCancel := context.WithCancel(context.Background())
+	defer writeCancel()
 
 	wg := sync.WaitGroup{}
 	for _, ch := range chans {
-		wg.Add(1)
+		wg.Go(func() {
+			for {
+				val, ok := NewReader(ch).ReadValueWithContext(readCtx)
+				if !ok {
+					return
+				}
 
-		go func() {
-			defer wg.Done()
-
-			for item := range ch {
-				result <- item
+				err := NewWriter(result).Put(writeCtx, val)
+				if err != nil {
+					return
+				}
 			}
-		}()
+		})
 	}
 
 	go func() {
@@ -58,87 +38,31 @@ func FanIn[T any](chans ...<-chan T) <-chan T {
 		close(result)
 	}()
 
-	return result
+	return fn(result, readCancel)
 }
 
-func Map[IN, OUT any](fn func(IN) OUT) func(<-chan IN) <-chan OUT {
-	return func(stream <-chan IN) <-chan OUT {
-		result := make(chan OUT)
-
-		go func() {
-			defer close(result)
-
-			for item := range stream {
-				result <- fn(item)
-			}
-		}()
-
-		return result
+func Drain[T any](ch <-chan T) {
+	for range ch {
 	}
 }
 
-func Parallel[IN, OUT any](stream <-chan IN, fn func(IN) OUT, count int) <-chan OUT {
-	processStreams := make([]<-chan OUT, count)
-	for i := range count {
-		processStreams[i] = Map(fn)(stream)
-	}
+func DrainAsync[T any](ctx context.Context, ch <-chan T) <-chan error {
+	res := make(chan error, 1)
 
-	return FanIn(processStreams...)
-}
-
-func Batch[T any](size int) func(stream <-chan T) <-chan []T {
-	return func(stream <-chan T) <-chan []T {
-
-		result := make(chan []T)
-
-		go func() {
-			defer close(result)
-
-			chunk := make([]T, 0, size)
-			closed := false
-
-			for !closed {
-				needFlush := false
-
-				select {
-				case item, ok := <-stream:
-					if !ok {
-						closed = true
-						needFlush = true
-						break
-					}
-
-					chunk = append(chunk, item)
-					needFlush = len(chunk) >= size
-					// case <-timer:
-					// needFlush = true
-				}
-
-				if needFlush && (len(chunk) > 0) {
-					result <- chunk
-					chunk = make([]T, 0, size)
-				}
-			}
-		}()
-
-		return result
-	}
-}
-
-func Drain[IN any](stream <-chan IN) {
 	go func() {
-		for range stream {
+		defer close(res)
+
+		for {
+			select {
+			case _, ok := <-ch:
+				if !ok {
+					return
+				}
+			case <-ctx.Done():
+				res <- xerrors.FromContext(ctx)
+			}
 		}
 	}()
-}
 
-// TrySendNonBlocking пытается отправить значение в канал без блокировки.
-// Возвращает true, если значение было отправлено, и false, если канал переполнен.
-func TrySendNonBlocking[T any](ch chan T, value T) bool {
-	select {
-	case ch <- value:
-		return true
-	default:
-		return false
-	}
+	return res
 }

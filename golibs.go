@@ -5,13 +5,18 @@ package std
 // Пустое значение
 type Void struct{}
 
-func NewVoid() Void {
+func Empty() Void {
 	return Void{}
 }
 
 func Zero[T any]() T {
 	var t T
 	return t
+}
+
+func ZeroErr[T any](err error) (T, error) {
+	var t T
+	return t, err
 }
 
 type Size interface {

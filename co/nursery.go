@@ -5,6 +5,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/SlamJam/go-libs/co/awaitable"
+	"github.com/SlamJam/go-libs/co/promise"
 	"github.com/pkg/errors"
 )
 
@@ -15,20 +17,20 @@ var (
 type Nursery struct {
 	ctx      context.Context
 	cancel   context.CancelFunc
-	promises Awaitables
+	promises []awaitable.Awaitable
 	mu       *sync.Mutex
 	// isCompleted   *atomic.Bool
 	isInitialized bool
 }
 
 type NurseryResult struct {
-	promises Awaitables
+	promises []awaitable.Awaitable
 }
 
 func (nr NurseryResult) Await(ctx context.Context) error {
 	// n.assertIsInitialized()
 
-	return nr.promises.AwaitAll(ctx)
+	return awaitable.FromSlice(nr.promises).AwaitResults(ctx).Collect().Err()
 }
 
 func (n *Nursery) assertIsInitialized() {
@@ -96,8 +98,8 @@ func WithContextResult[RES any](ctx context.Context, f func(n Nursery) (RES, err
 }
 
 // f - лямбда
-func Fork[T any](n Nursery, f func() (T, error)) Promise[T] {
-	p := NewPromise(f)
+func (n *Nursery) Fork[T any](f func() (T, error)) promise.Promise[T] {
+	p := S.Launch(f)
 
 	n.mu.Lock()
 	defer n.mu.Unlock()
@@ -107,8 +109,8 @@ func Fork[T any](n Nursery, f func() (T, error)) Promise[T] {
 	return p
 }
 
-func ForkInMultiPromise[T any](n Nursery, mp MultiPromise[T], f func() (T, error)) {
-	p := Fork(n, f)
+func (n *Nursery) ForkInMultiPromise[T any](mp PromiseSlice[T], f func() (T, error)) {
+	p := n.Fork(f)
 	mp.Append(p)
 }
 
@@ -123,24 +125,24 @@ func xxx1() {
 	}
 
 	WithContext(context.TODO(), func(n Nursery) {
-		var mpFoo MultiPromise[Foo]
+		var mpFoo PromiseSlice[Foo]
 
 		for range 5 {
-			ForkInMultiPromise(n, mpFoo, func() (Foo, error) {
+			n.ForkInMultiPromise(mpFoo, func() (Foo, error) {
 				n.Ctx()
 
 				return Foo{}, nil
 			})
 		}
 
-		pBar := Fork(n, func() (Bar, error) {
+		pBar := n.Fork(func() (Bar, error) {
 			n.Ctx()
 
 			return Bar{}, nil
 		})
 
-		pBaz := Fork(n, func() (Baz, error) {
-			bar, err := pBar.Poll(n.Ctx())
+		pBaz := n.Fork(func() (Baz, error) {
+			bar, err := pBar.GetOrAwait(n.Ctx())
 			if err != nil {
 				return Baz{}, err
 			}
@@ -150,11 +152,11 @@ func xxx1() {
 			return Baz{}, nil
 		})
 
-		foos, err1 := mpFoo.AllResultsOrFirstError(n.Ctx())
+		foos, err1 := mpFoo.AwaitAllOrFirstError(n.Ctx())
 		_ = foos
 		_ = err1
 
-		baz, err2 := pBaz.Poll(n.Ctx())
+		baz, err2 := pBaz.GetOrAwait(n.Ctx())
 		_ = baz
 		_ = err2
 	})
@@ -171,11 +173,11 @@ func xxx2() {
 		Baz Baz
 	}
 
-	getFooPromises := func(n Nursery, count int) MultiPromise[Foo] {
-		var mpFoo MultiPromise[Foo]
+	getFooPromises := func(n Nursery, count int) PromiseSlice[Foo] {
+		var mpFoo PromiseSlice[Foo]
 
 		for range count {
-			ForkInMultiPromise(n, mpFoo, func() (Foo, error) {
+			n.ForkInMultiPromise(mpFoo, func() (Foo, error) {
 				n.Ctx()
 
 				return Foo{}, nil
@@ -185,8 +187,8 @@ func xxx2() {
 		return mpFoo
 	}
 
-	getBarPromise := func(n Nursery) Promise[Bar] {
-		return Fork(n, func() (Bar, error) {
+	getBarPromise := func(n Nursery) promise.Promise[Bar] {
+		return n.Fork(func() (Bar, error) {
 			n.Ctx()
 
 			return Bar{}, nil
@@ -199,9 +201,9 @@ func xxx2() {
 		return Baz{}, nil
 	}
 
-	getBazPromise := func(n Nursery, pBar Promise[Bar]) Promise[Baz] {
-		return Fork(n, func() (Baz, error) {
-			bar, err := pBar.Poll(n.Ctx())
+	getBazPromise := func(n Nursery, pBar promise.Promise[Bar]) promise.Promise[Baz] {
+		return n.Fork(func() (Baz, error) {
+			bar, err := pBar.GetOrAwait(n.Ctx())
 			if err != nil {
 				return Baz{}, err
 			}
@@ -216,10 +218,10 @@ func xxx2() {
 		pBar := getBarPromise(n)
 		pBaz := getBazPromise(n, pBar)
 
-		foos, err1 := mpFoo.AllResultsOrFirstError(n.Ctx())
+		foos, err1 := mpFoo.AwaitAllOrFirstError(n.Ctx())
 		_, _ = foos, err1
 
-		baz, err2 := pBaz.Poll(n.Ctx())
+		baz, err2 := pBaz.GetOrAwait(n.Ctx())
 		_, _ = baz, err2
 	})
 	// тут n.Ctx() уже будет кенсельнут
@@ -229,10 +231,10 @@ func xxx2() {
 		pBar := getBarPromise(n)
 		pBaz := getBazPromise(n, pBar)
 
-		foos, err1 := mpFoo.AllResultsOrFirstError(n.Ctx())
+		foos, err1 := mpFoo.AwaitAllOrFirstError(n.Ctx())
 		_, _ = foos, err1
 
-		baz, err2 := pBaz.Poll(n.Ctx())
+		baz, err2 := pBaz.GetOrAwait(n.Ctx())
 		_, _ = baz, err2
 
 		return 42, nil
@@ -248,43 +250,43 @@ func RequesReplica(context.Context, string) (Response, error) {
 	return Response{}, nil
 }
 
-func requesShard(n Nursery, addrs []string) Promise[Response] {
-	var replicaReqs MultiPromise[Response]
+func requesShard(n Nursery, addrs []string) promise.Promise[Response] {
+	var replicaReqs PromiseSlice[Response]
 
 	for _, addr := range addrs {
-		ForkInMultiPromise(n, replicaReqs, func() (Response, error) {
+		n.ForkInMultiPromise(replicaReqs, func() (Response, error) {
 			return RequesReplica(n.Ctx(), addr)
 		})
 	}
 
-	return Fork(n, func() (Response, error) {
-		_, resp, err := replicaReqs.FirstResult(n.Ctx())
-		return resp, err
+	return n.Fork(func() (Response, error) {
+		_, resp, _ := replicaReqs.Results(n.Ctx()).CollectFirstResult()
+		return resp, nil
 	})
 }
 
 var ErrReplicaResultTimeout = errors.New("replica time budget exeeded")
 
-func requesShardWithDelay(n Nursery, addrs []string) Promise[Response] {
-	return Fork(n, func() (Response, error) {
-		var replicaReqs MultiPromise[Response]
+func requesShardWithDelay(n Nursery, addrs []string) promise.Promise[Response] {
+	return n.Fork(func() (Response, error) {
+		var replicaReqs PromiseSlice[Response]
 
 		for _, addr := range addrs {
-			ForkInMultiPromise(n, replicaReqs, func() (Response, error) {
+			n.ForkInMultiPromise(replicaReqs, func() (Response, error) {
 				return RequesReplica(n.Ctx(), addr)
 			})
 
 			waitCtx, cancel := context.WithTimeoutCause(n.Ctx(), 50*time.Millisecond, ErrReplicaResultTimeout)
 			defer cancel()
 
-			_, resp, err := replicaReqs.FirstResult(waitCtx)
-			if err == nil {
-				return resp, nil
-			}
+			_, resp, _ := replicaReqs.Results(waitCtx).CollectFirstResult()
+			// if err == nil {
+			return resp, nil
+			// }
 		}
 
-		_, resp, err := replicaReqs.FirstResult(n.Ctx())
-		return resp, err
+		_, resp, _ := replicaReqs.Results(n.Ctx()).CollectFirstResult()
+		return resp, nil
 	})
 }
 
@@ -310,14 +312,14 @@ func xxx3() {
 	}
 
 	nr, resp, err := WithContextResult(context.TODO(), func(n Nursery) ([]Response, error) {
-		var shardReqs MultiPromise[Response]
+		var shardReqs PromiseSlice[Response]
 		for _, shard := range cluster {
 			p := requesShard(n, shard)
 			shardReqs.Append(p)
 		}
 
 		// Хотим все результаты
-		return shardReqs.AllResults(n.Ctx())
+		// return shardReqs.AllResults(n.Ctx())
 
 		// Зачем ждать все, если кто-то не ответил?
 		// return shardReqs.AllResultsOrFirstError(n.Ctx())
@@ -329,6 +331,7 @@ func xxx3() {
 		// }
 
 		// return partialResult.AvailableResults(), nil
+		return nil, nil
 	})
 
 	_, _ = resp, err
@@ -338,6 +341,6 @@ func xxx3() {
 	nr.Await(context.TODO())
 
 	// Focus
-	manyNurseryResults := Awaitables{nr, nr, nr}
-	_ = manyNurseryResults.AwaitAll(context.TODO())
+	manyNurseryResults := awaitable.FromItems(nr, nr, nr)
+	_ = manyNurseryResults.AwaitResults(context.TODO()).Collect()
 }

@@ -7,7 +7,6 @@ import (
 
 	"github.com/SlamJam/go-libs/actors"
 	"github.com/SlamJam/go-libs/options"
-	"github.com/SlamJam/go-libs/xchan"
 	"github.com/SlamJam/go-libs/xslices"
 )
 
@@ -119,14 +118,14 @@ func (b *Batcher[T]) do(ctx context.Context) error {
 	}
 }
 
-func Foo() {
-	b := NewBatcher[int](1000)
+// func Foo() {
+// 	b := NewBatcher[int](1000)
 
-	go func() {
-		for batch := range b.C() {
-			_ = batch
-		}
-	}()
+// 	go func() {
+// 		for batch := range b.C() {
+// 			_ = batch
+// 		}
+// 	}()
 
-	xchan.Put(b.InputCh, 5, 1*time.Second)
-}
+// 	xchan.Put(b.InputCh, 5, 1*time.Second)
+// }

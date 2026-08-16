@@ -60,17 +60,17 @@ func Unique[S ~[]T, T comparable](items S) S {
 // UniqueByKey возвращает массив элементов, уникальных по значению предиката.
 // `mapFunc` позволяет получить ключ, по которому определяется уникальность элемента.
 func UniqueByKey[S ~[]T, K comparable, T any](s S, mapFunc Mapper[T, K]) S {
-	return UniqueMapPrior(
+	return UniqueByKeyPrior(
 		s, mapFunc, func(i, j int) bool {
 			return false
 		},
 	)
 }
 
-// UniqueMapPrior возвращает уникальные значения с наивысшим приоритетом.
+// UniqueByKeyPrior возвращает уникальные значения с наивысшим приоритетом.
 // Приоритет задается функцией less, аналогично функции sort.Slice.
 // Отобранные значения сохраняют свой порядок в результирующем слайсе.
-func UniqueMapPrior[S ~[]T, K comparable, T any](items S, mapper Mapper[T, K], less Less) S {
+func UniqueByKeyPrior[S ~[]T, K comparable, T any](items S, mapper Mapper[T, K], less Less) S {
 	idxByKey := make(map[K]int, len(items))
 	for i, item := range items {
 		key := mapper(item)
@@ -113,8 +113,8 @@ func Foo() {
 	Batched(x, 2)
 }
 
-// Chunked разбивает исходный слайс на count частей примерно равного размера
-func Chunked[S ~[]T, T any](items S, count int) []S {
+// Chunks разбивает исходный слайс на count частей примерно равного размера
+func Chunks[S ~[]T, T any](items S, count int) []S {
 	std.AssertSize(count)
 
 	result := make([]S, 0, count)
