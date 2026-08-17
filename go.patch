@@ -1,0 +1,98 @@
+diff --git src/cmd/compile/internal/importer/ureader.go src/cmd/compile/internal/importer/ureader.go
+index 70ee01be39..b2841ef939 100644
+--- src/cmd/compile/internal/importer/ureader.go
++++ src/cmd/compile/internal/importer/ureader.go
+@@ -450,9 +450,15 @@ func (pr *pkgReader) objIdx(idx pkgbits.Index) (*types2.Package, string) {
+ 		case pkgbits.ObjType:
+ 			pos := r.pos()
+ 
+-			return types2.NewTypeNameLazy(pos, objPkg, objName, func(_ *types2.Named) ([]*types2.TypeParam, types2.Type, []*types2.Func, []func()) {
++			return types2.NewTypeNameLazy(pos, objPkg, objName, func(n *types2.Named) ([]*types2.TypeParam, types2.Type, []*types2.Func, []func()) {
+ 				tparams := r.typeParamNames(true, false)
+ 
++				// Publish tparams on n now, before reading underlying and methods
++				// below: a method's signature (in particular a generic method's,
++				// read further down) may refer back to n via an instantiated type
++				// alias, which needs n's type parameters before this loader returns.
++				n.SetTypeParamsEarly(tparams)
++
+ 				// TODO(mdempsky): Rewrite receiver types to underlying is an
+ 				// Interface? The go/types importer does this (I think because
+ 				// unit tests expected that), but cmd/compile doesn't care
+diff --git src/cmd/compile/internal/types2/named.go src/cmd/compile/internal/types2/named.go
+index 94da87f0d6..42559fc2f0 100644
+--- src/cmd/compile/internal/types2/named.go
++++ src/cmd/compile/internal/types2/named.go
+@@ -178,6 +178,13 @@ const (
+ 	hasMethods                       // methods are all expanded (for instances)
+ 	hasUnder                         // underlying type is available
+ 	hasVarSize                       // varSize is available
++
++	// hasTypeParams is independent of the above hierarchy: a loader may set it
++	// on n before n.loader(n) returns, to publish n's type parameters early and
++	// let a reentrant TypeParams() call (e.g. while the loader is still reading
++	// a generic method whose signature refers back to n) observe them without
++	// re-entering unpack() and its non-reentrant lock.
++	hasTypeParams
+ )
+ 
+ // NewNamed returns a new named type for the given type name, underlying type, and associated methods.
+@@ -266,7 +273,13 @@ func (n *Named) unpack() *Named {
+ 		tparams, underlying, methods, delayed := n.loader(n)
+ 		n.loader = nil
+ 
+-		n.tparams = bindTParams(tparams)
++		// The loader may have already published tparams via setTypeParamsEarly,
++		// e.g. to let a generic method's signature refer back to n. bindTParams
++		// must not run twice on the same *TypeParams (it panics), so only bind
++		// here if that didn't happen.
++		if !n.stateHas(hasTypeParams) {
++			n.tparams = bindTParams(tparams)
++		}
+ 		n.underlying = underlying
+ 		n.fromRHS = underlying // for cycle detection
+ 		n.methods = methods
+@@ -274,7 +287,7 @@ func (n *Named) unpack() *Named {
+ 		// Careful: A delayed function could need the underlying type of
+ 		// the type we are loading, so we must advance to hasUnder to
+ 		// avoid a deadlock (see go.dev/issue/80258).
+-		n.setState(lazyLoaded | unpacked | hasMethods | hasUnder)
++		n.setState(lazyLoaded | unpacked | hasMethods | hasUnder | hasTypeParams)
+ 		for _, f := range delayed {
+ 			f()
+ 		}
+@@ -390,7 +403,12 @@ func (t *Named) Origin() *Named {
+ 
+ // TypeParams returns the type parameters of the named type t, or nil.
+ // The result is non-nil for an (originally) generic type even if it is instantiated.
+-func (t *Named) TypeParams() *TypeParamList { return t.unpack().tparams }
++func (t *Named) TypeParams() *TypeParamList {
++	if t.stateHas(hasTypeParams) {
++		return t.tparams
++	}
++	return t.unpack().tparams
++}
+ 
+ // SetTypeParams sets the type parameters of the named type t.
+ // t must not have type arguments.
+@@ -399,6 +417,20 @@ func (t *Named) SetTypeParams(tparams []*TypeParam) {
+ 	t.unpack().tparams = bindTParams(tparams)
+ }
+ 
++// SetTypeParamsEarly publishes n's type parameters before n.loader(n) has
++// returned. It must only be called from within a loader function passed to
++// [NewTypeNameLazy], which runs with n.mu already held by [Named.unpack];
++// this lets a loader that needs to resolve n's own type parameters while
++// still reading the rest of n (e.g. a generic method whose signature refers
++// back to n) do so without reentering unpack's non-reentrant lock.
++func (n *Named) SetTypeParamsEarly(tparams []*TypeParam) {
++	if n.stateHas(hasTypeParams) {
++		return
++	}
++	n.tparams = bindTParams(tparams)
++	n.setState(hasTypeParams)
++}
++
+ // TypeArgs returns the type arguments used to instantiate the named type t.
+ func (t *Named) TypeArgs() *TypeList {
+ 	if t.inst == nil {
